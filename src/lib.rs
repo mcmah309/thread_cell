@@ -1,5 +1,4 @@
 use std::thread;
-use tracing::warn;
 
 /// Messages sent to the manager thread
 enum ThreadCellMessage<T> {
@@ -81,18 +80,14 @@ impl<T: Send> ThreadCell<T> {
                     ThreadCellMessage::Run(f) => f(&mut resource),
                     ThreadCellMessage::GetSessionSync(responder) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        if responder.send(ThreadCellSession { sender: stx }).is_err() {
-                            warn!("Lock responder dropped before responding");
-                        }
+                        let _ = responder.send(ThreadCellSession { sender: stx });
                         while let Ok(f) = srx.recv() {
                             f(&mut resource);
                         }
                     }
                     ThreadCellMessage::GetSessionAsync(sender) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        if sender.send(ThreadCellSession { sender: stx }).is_err() {
-                            warn!("Lock responder dropped before responding");
-                        }
+                        let _ = sender.send(ThreadCellSession { sender: stx });
                         while let Ok(f) = srx.recv() {
                             f(&mut resource);
                         }
@@ -117,18 +112,14 @@ impl<T> ThreadCell<T> {
                     ThreadCellMessage::Run(f) => f(&mut resource),
                     ThreadCellMessage::GetSessionSync(responder) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        if responder.send(ThreadCellSession { sender: stx }).is_err() {
-                            warn!("Lock responder dropped before responding");
-                        }
+                        let _ = responder.send(ThreadCellSession { sender: stx });
                         while let Ok(f) = srx.recv() {
                             f(&mut resource);
                         }
                     }
                     ThreadCellMessage::GetSessionAsync(sender) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        if sender.send(ThreadCellSession { sender: stx }).is_err() {
-                            warn!("Lock responder dropped before responding");
-                        }
+                        let _ = sender.send(ThreadCellSession { sender: stx });
                         while let Ok(f) = srx.recv() {
                             f(&mut resource);
                         }
