@@ -3,8 +3,9 @@ use std::thread;
 use tracing::warn;
 
 /// Messages sent to the manager thread
-enum ManagerMessage<T> {
+enum ManagerMessage<T, R> {
     Run(Box<dyn FnOnce(&mut T) + Send>),
+    RunFn(fn(&mut T) -> R, channel::Sender<R>),
     GetLockSync(channel::Sender<ResourceLock<T>>),
     GetLockAsync(tokio::sync::oneshot::Sender<ResourceLock<T>>),
 }
@@ -56,19 +57,25 @@ static MANAGER_ERROR_MESSAGE: &str = "Manager thread has panicked";
 
 /// Single-threaded manager for any `!Send` resource.
 #[derive(Clone)]
-pub struct ResourceManager<T: 'static> {
-    sender: channel::Sender<ManagerMessage<T>>,
+pub struct ResourceManager<T: 'static, CR = ()>
+where
+    CR: Send + 'static,
+{
+    sender: channel::Sender<ManagerMessage<T, CR>>,
 }
 
-impl<T: Send + 'static> ResourceManager<T> {
+impl<T: Send + 'static, CR: Send + 'static> ResourceManager<T, CR> {
     /// Creates new
     pub fn new(mut resource: T) -> Self {
-        let (tx, rx) = channel::unbounded::<ManagerMessage<T>>();
+        let (tx, rx) = channel::unbounded::<ManagerMessage<T, CR>>();
 
         thread::spawn(move || {
             while let Ok(msg) = rx.recv() {
                 match msg {
                     ManagerMessage::Run(f) => f(&mut resource),
+                    ManagerMessage::RunFn(f, responder) => {
+                        let _ = responder.send(f(&mut resource));
+                    }
                     ManagerMessage::GetLockSync(responder) => {
                         let (stx, srx) = channel::unbounded::<SessionMsg<T>>();
                         if responder.send(ResourceLock { sender: stx }).is_err() {
@@ -95,16 +102,19 @@ impl<T: Send + 'static> ResourceManager<T> {
     }
 }
 
-impl<T: 'static> ResourceManager<T> {
+impl<T: Send, CR: Send + 'static> ResourceManager<T, CR> {
     /// Creates a new when `T` is not `Send` but a function to create `T` is
     pub fn new_with<F: FnOnce() -> T + Send + 'static>(resource_fn: F) -> Self {
-        let (tx, rx) = channel::unbounded::<ManagerMessage<T>>();
+        let (tx, rx) = channel::unbounded::<ManagerMessage<T,CR>>();
 
         thread::spawn(move || {
             let mut resource = resource_fn();
             while let Ok(msg) = rx.recv() {
                 match msg {
                     ManagerMessage::Run(f) => f(&mut resource),
+                    ManagerMessage::RunFn(f, responder) => {
+                        let _ = responder.send(f(&mut resource));
+                    }
                     ManagerMessage::GetLockSync(responder) => {
                         let (stx, srx) = channel::unbounded::<SessionMsg<T>>();
                         if responder.send(ResourceLock { sender: stx }).is_err() {
@@ -141,6 +151,14 @@ impl<T: 'static> ResourceManager<T> {
                 let res = f(resource);
                 let _ = tx.send(res);
             })))
+            .expect(MANAGER_ERROR_MESSAGE);
+        rx.recv().expect(MANAGER_ERROR_MESSAGE)
+    }
+
+    pub fn run_blocking_fn(&self, f: fn(&mut T) -> CR) -> CR {
+        let (tx, rx) = channel::bounded(1);
+        self.sender
+            .send(ManagerMessage::RunFn(f, tx))
             .expect(MANAGER_ERROR_MESSAGE);
         rx.recv().expect(MANAGER_ERROR_MESSAGE)
     }
