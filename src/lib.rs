@@ -184,6 +184,50 @@ impl<T> ThreadCell<T> {
     }
 }
 
+impl<T: Send> ThreadCell<T> {
+    /// Set the resource in a blocking manner
+    pub fn set_blocking(&self, new_value: T) {
+        self.run_blocking(|res| *res = new_value);
+    }
+
+    /// Set the resource in an async manner
+    pub async fn set(&self, new_value: T) {
+        self.run(|res| *res = new_value).await;
+    }
+
+    /// Set the resource in a blocking manner, returning the old value
+    pub fn replace_blocking(&self, new_value: T) -> T {
+        self.run_blocking(|res| std::mem::replace(res, new_value))
+    }
+
+    /// Set the resource in an async manner, returning the old value
+    pub async fn replace(&self, new_value: T) -> T {
+        self.run(|res| std::mem::replace(res, new_value)).await
+    }
+}
+
+impl<T: Send + Default> ThreadCell<T> {
+    pub fn take_blocking(&self) -> T {
+        self.run_blocking(|res| std::mem::take(res))
+    }
+
+    pub async fn take(&self) -> T {
+        self.run(|res| std::mem::take(res)).await
+    }
+}
+
+impl<T: Send + Clone> ThreadCell<T> {
+    /// Get a clone of the resource in a blocking manner
+    pub fn get_blocking(&self) -> T {
+        self.run_blocking(|res| res.clone())
+    }
+
+    /// Get a clone of the resource in an async manner
+    pub async fn get(&self) -> T {
+        self.run(|res| res.clone()).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
