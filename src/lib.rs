@@ -13,7 +13,7 @@ type SessionMsg<T> = Box<dyn FnOnce(&mut T) + Send>;
 
 static SESSION_ERROR_MESSAGE: &str = "Session thread has panicked or resource was dropped";
 
-/// A "lock" on the resource until dropped.
+/// A "lock" on the resource held by the thread until dropped.
 /// While held, this is the only way to access the resource.
 pub struct ThreadCellLock<T> {
     sender: crossbeam::channel::Sender<SessionMsg<T>>,
@@ -53,7 +53,8 @@ impl<T> ThreadCellLock<T> {
 
 static MANAGER_ERROR_MESSAGE: &str = "Manager thread has panicked";
 
-/// Single-threaded manager for any `!Send` resource.
+/// A cell that holds a value bound to a single thread. Thus T can be non-`Send` and/or non-`Sync`,
+/// but `ThreadCell<T>` is always `Send`/`Sync`. Alternative to `Arc<Mutex<T>>`.
 pub struct ThreadCell<T: 'static> {
     sender: crossbeam::channel::Sender<ThreadCellMessage<T>>,
 }
