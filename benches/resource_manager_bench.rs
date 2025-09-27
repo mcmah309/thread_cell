@@ -21,91 +21,125 @@ impl TestResource {
     }
     
     fn compute_sum(&mut self) -> usize {
-        self.data.iter().map(|&x| x as usize).sum::<usize>() + self.counter
+        self.data.iter().sum::<usize>() + self.counter
     }
     
     fn reset(&mut self) {
         self.counter = 0;
         self.data.clear();
     }
-}
-
-// Function pointer versions for RunFn
-fn increment_fn(resource: &mut TestResource) -> usize {
-    resource.increment()
-}
-
-fn add_value_fn(resource: &mut TestResource) -> usize {
-    resource.add_value(42)
-}
-
-fn compute_sum_fn(resource: &mut TestResource) -> usize {
-    resource.compute_sum()
-}
-
-fn reset_fn(resource: &mut TestResource) -> usize {
-    resource.reset();
-    0
-}
-
-fn benchmark_run_vs_run_fn(c: &mut Criterion) {
-    let mut group = c.benchmark_group("ResourceManager Run vs RunFn");
     
-    // Setup managers for different test scenarios
-    let manager_usize = ResourceManager::<TestResource, usize>::new(TestResource::default());
-    let manager_unit = ResourceManager::<TestResource, ()>::new(TestResource::default());
+    fn batch_operation(&mut self, value: usize) -> (usize, usize) {
+        self.data.push(value);
+        self.counter += 1;
+        (self.data.len(), self.counter)
+    }
+}
+
+fn benchmark_basic_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Basic Operations");
     
-    // Benchmark simple increment operation (returns usize)
-    group.bench_function("run_blocking_increment", |b| {
+    let manager = ResourceManager::<TestResource>::new(TestResource::default());
+    
+    // Simple increment
+    group.bench_function("increment", |b| {
         b.iter(|| {
-            manager_usize.run_blocking(|resource| {
+            let result = manager.run_blocking(|resource| {
                 black_box(resource.increment())
-            })
+            });
+            black_box(result);
         })
     });
     
-    group.bench_function("run_blocking_fn_increment", |b| {
+    // Add operation
+    group.bench_function("add_value", |b| {
         b.iter(|| {
-            manager_usize.run_blocking_fn(increment_fn)
-        })
-    });
-    
-    // Benchmark add operation (returns usize)
-    group.bench_function("run_blocking_add", |b| {
-        b.iter(|| {
-            manager_usize.run_blocking(|resource| {
+            let result = manager.run_blocking(|resource| {
                 black_box(resource.add_value(42))
-            })
+            });
+            black_box(result);
         })
     });
     
-    group.bench_function("run_blocking_fn_add", |b| {
+    // More expensive compute operation
+    group.bench_function("compute_sum", |b| {
         b.iter(|| {
-            manager_usize.run_blocking_fn(add_value_fn)
-        })
-    });
-    
-    // Benchmark compute operation (more expensive, returns usize)
-    group.bench_function("run_blocking_compute", |b| {
-        b.iter(|| {
-            manager_usize.run_blocking(|resource| {
+            let result = manager.run_blocking(|resource| {
                 black_box(resource.compute_sum())
-            })
+            });
+            black_box(result);
         })
     });
     
-    group.bench_function("run_blocking_fn_compute", |b| {
+    // Void operation
+    group.bench_function("reset", |b| {
         b.iter(|| {
-            manager_usize.run_blocking_fn(compute_sum_fn)
-        })
-    });
-    
-    // Benchmark void operation (returns ())
-    group.bench_function("run_blocking_reset", |b| {
-        b.iter(|| {
-            manager_unit.run_blocking(|resource| {
+            manager.run_blocking(|resource| {
                 black_box(resource.reset())
-            })
+            });
+        })
+    });
+    
+    // Combined operation (simulates real-world usage)
+    group.bench_function("batch_operation", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(|resource| {
+                black_box(resource.batch_operation(42))
+            });
+            black_box(result);
+        })
+    });
+    
+    group.finish();
+}
+
+fn benchmark_closure_types(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Closure Types");
+    
+    let manager = ResourceManager::<TestResource>::new(TestResource::default());
+    
+    // Function pointer (direct function call)
+    fn increment_function(resource: &mut TestResource) -> usize {
+        resource.increment()
+    }
+    
+    group.bench_function("function_pointer", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(increment_function);
+            black_box(result);
+        })
+    });
+    
+    // Simple closure
+    group.bench_function("simple_closure", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(|resource| resource.increment());
+            black_box(result);
+        })
+    });
+    
+    // Closure with capture
+    let capture_value = 42;
+    group.bench_function("capturing_closure", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(move |resource| {
+                resource.add_value(capture_value);
+                resource.increment()
+            });
+            black_box(result);
+        })
+    });
+    
+    // Complex closure
+    group.bench_function("complex_closure", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(|resource| {
+                for i in 0..10 {
+                    resource.add_value(i);
+                }
+                resource.compute_sum()
+            });
+            black_box(result);
         })
     });
     
@@ -115,33 +149,38 @@ fn benchmark_run_vs_run_fn(c: &mut Criterion) {
 fn benchmark_batch_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Batch Operations");
     
-    let manager = ResourceManager::<TestResource, usize>::new(TestResource::default());
+    let manager = ResourceManager::<TestResource>::new(TestResource::default());
     
-    // Benchmark batch of operations using run_blocking
-    group.bench_function("batch_run_blocking", |b| {
+    // Many individual operations
+    group.bench_function("individual_operations", |b| {
         b.iter(|| {
             for i in 0..100 {
-                let value = manager.run_blocking(move |resource| {
+                let result = manager.run_blocking(move |resource| {
                     resource.add_value(i);
                     resource.increment()
                 });
-                black_box(value);
+                black_box(result);
             }
             // Reset for next iteration
             manager.run_blocking(|resource| resource.reset());
         })
     });
     
-    // Benchmark batch of operations using run_blocking_fn
-    group.bench_function("batch_run_blocking_fn", |b| {
+    // Batch operations in single call
+    group.bench_function("batched_in_single_call", |b| {
         b.iter(|| {
-            for _i in 0..100 {
-                let value1 = manager.run_blocking_fn(add_value_fn);
-                let value2 = manager.run_blocking_fn(increment_fn);
-                black_box((value1, value2));
-            }
+            let result = manager.run_blocking(|resource| {
+                let mut last_result = 0;
+                for i in 0..100 {
+                    resource.add_value(i);
+                    last_result = resource.increment();
+                }
+                last_result
+            });
+            black_box(result);
+            
             // Reset for next iteration
-            manager.run_blocking_fn(reset_fn);
+            manager.run_blocking(|resource| resource.reset());
         })
     });
     
@@ -151,34 +190,51 @@ fn benchmark_batch_operations(c: &mut Criterion) {
 fn benchmark_lock_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Lock Operations");
     
-    let manager = ResourceManager::<TestResource, usize>::new(TestResource::default());
+    let manager = ResourceManager::<TestResource>::new(TestResource::default());
     
-    // Benchmark using lock for batch operations
-    group.bench_function("lock_batch_operations", |b| {
+    // Using lock for batch operations
+    group.bench_function("with_lock", |b| {
         b.iter(|| {
             let lock = manager.lock_blocking();
             for i in 0..100 {
-                let value1 = lock.run_blocking(move |resource| {
+                let result = lock.run_blocking(move |resource| {
                     resource.add_value(i);
                     resource.increment()
                 });
-                black_box(value1);
+                black_box(result);
             }
             lock.run_blocking(|resource| resource.reset());
         })
     });
     
-    // Compare with individual calls (no lock held)
-    group.bench_function("no_lock_batch_operations", |b| {
+    // Without lock (individual manager calls)
+    group.bench_function("without_lock", |b| {
         b.iter(|| {
             for i in 0..100 {
-                let value = manager.run_blocking(move |resource| {
+                let result = manager.run_blocking(move |resource| {
                     resource.add_value(i);
                     resource.increment()
                 });
-                black_box(value);
+                black_box(result);
             }
             manager.run_blocking(|resource| resource.reset());
+        })
+    });
+    
+    // Lock with single batched operation
+    group.bench_function("lock_with_batch", |b| {
+        b.iter(|| {
+            let lock = manager.lock_blocking();
+            let result = lock.run_blocking(|resource| {
+                let mut last_result = 0;
+                for i in 0..100 {
+                    resource.add_value(i);
+                    last_result = resource.increment();
+                }
+                last_result
+            });
+            black_box(result);
+            lock.run_blocking(|resource| resource.reset());
         })
     });
     
@@ -189,28 +245,96 @@ fn benchmark_async_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Async Operations");
     
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let manager = Arc::new(ResourceManager::<TestResource, usize>::new(TestResource::default()));
+    let manager = Arc::new(ResourceManager::<TestResource>::new(TestResource::default()));
     
-    // Benchmark async run
+    // Async run using iter_custom
     group.bench_function("async_run", |b| {
-        b.to_async(&rt).iter(|| async {
+        b.iter_custom(|iters| {
             let manager = manager.clone();
-            let value = manager.run(|resource| {
+            rt.block_on(async move {
+                let start = std::time::Instant::now();
+                for _i in 0..iters {
+                    let result = manager.run(|resource| {
+                        black_box(resource.increment())
+                    }).await;
+                    black_box(result);
+                }
+                start.elapsed()
+            })
+        });
+    });
+    
+    // Async lock using iter_custom
+    group.bench_function("async_lock", |b| {
+        b.iter_custom(|iters| {
+            let manager = manager.clone();
+            rt.block_on(async move {
+                let start = std::time::Instant::now();
+                for _i in 0..iters {
+                    let lock = manager.lock().await;
+                    let result = lock.run(|resource| {
+                        black_box(resource.increment())
+                    }).await;
+                    black_box(result);
+                }
+                start.elapsed()
+            })
+        });
+    });
+    
+    // Compare with blocking versions
+    group.bench_function("blocking_equivalent", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(|resource| {
                 black_box(resource.increment())
-            }).await;
-            black_box(value);
+            });
+            black_box(result);
         })
     });
     
-    // Benchmark async lock
-    group.bench_function("async_lock", |b| {
-        b.to_async(&rt).iter(|| async {
-            let manager = manager.clone();
-            let lock = manager.lock().await;
-            let value = lock.run(|resource| {
+    group.finish();
+}
+
+fn benchmark_different_workloads(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Different Workloads");
+    
+    let manager = ResourceManager::<TestResource>::new(TestResource::default());
+    
+    // Light workload (just increment)
+    group.bench_function("light_workload", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(|resource| {
                 black_box(resource.increment())
-            }).await;
-            black_box(value);
+            });
+            black_box(result);
+        })
+    });
+    
+    // Medium workload (some computation)
+    group.bench_function("medium_workload", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(|resource| {
+                for i in 0..10 {
+                    resource.add_value(i);
+                }
+                black_box(resource.compute_sum())
+            });
+            black_box(result);
+        })
+    });
+    
+    // Heavy workload (lots of computation)
+    group.bench_function("heavy_workload", |b| {
+        b.iter(|| {
+            let result = manager.run_blocking(|resource| {
+                for i in 0..1000 {
+                    resource.add_value(i);
+                }
+                let sum = resource.compute_sum();
+                resource.reset();
+                black_box(sum)
+            });
+            black_box(result);
         })
     });
     
@@ -219,9 +343,11 @@ fn benchmark_async_operations(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    benchmark_run_vs_run_fn,
+    benchmark_basic_operations,
+    benchmark_closure_types,
     benchmark_batch_operations,
     benchmark_lock_operations,
-    benchmark_async_operations
+    benchmark_async_operations,
+    benchmark_different_workloads
 );
 criterion_main!(benches);
