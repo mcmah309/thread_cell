@@ -54,9 +54,14 @@ impl<T> ResourceLock<T> {
 static MANAGER_ERROR_MESSAGE: &str = "Manager thread has panicked";
 
 /// Single-threaded manager for any `!Send` resource.
-#[derive(Clone)]
 pub struct ResourceManager<T: 'static> {
     sender: crossbeam::channel::Sender<ManagerMessage<T>>,
+}
+
+impl<T: 'static> Clone for ResourceManager<T> {
+    fn clone(&self) -> Self {
+        Self { sender: self.sender.clone() }
+    }
 }
 
 impl<T: Send + 'static> ResourceManager<T> {
