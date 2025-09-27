@@ -1,9 +1,9 @@
 use actor_cell::ResourceManager;
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
 
-// Test resource type
+// Heavier test resource to make contention more realistic
 #[derive(Default)]
 struct TestResource {
     counter: usize,
@@ -12,13 +12,21 @@ struct TestResource {
 
 impl TestResource {
     fn increment(&mut self) -> usize {
+        // Simulate some CPU work
+        for x in self.data.iter_mut().take(8) {
+            *x = x.wrapping_add(1);
+        }
         self.counter += 1;
         self.counter
     }
 
-    fn add_value(&mut self, value: usize) -> usize {
+    fn read_counter(&self) -> usize {
+        // Simulate a read workload
+        self.data.iter().take(4).fold(self.counter, |acc, &x| acc.wrapping_add(x))
+    }
+
+    fn add_value(&mut self, value: usize) {
         self.data.push(value);
-        self.data.len()
     }
 
     fn reset(&mut self) {
@@ -27,7 +35,9 @@ impl TestResource {
     }
 }
 
-//************************************************************************//
+// -----------------------------------------------------------
+// Batch operations benchmark
+// -----------------------------------------------------------
 
 fn benchmark_batch_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Individual vs Batch Operations");
@@ -38,12 +48,15 @@ fn benchmark_batch_operations(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..100 {
                 let result = manager.run_blocking(move |resource| {
-                    resource.add_value(i);
+                    if i % 10 == 0 {
+                        resource.add_value(i);
+                    } else {
+                        black_box(resource.read_counter());
+                    }
                     resource.increment()
                 });
                 black_box(result);
             }
-            // Reset for next iteration
             manager.run_blocking(|resource| resource.reset());
         })
     });
@@ -53,20 +66,26 @@ fn benchmark_batch_operations(c: &mut Criterion) {
             let result = manager.run_blocking(|resource| {
                 let mut last_result = 0;
                 for i in 0..100 {
-                    resource.add_value(i);
+                    if i % 10 == 0 {
+                        resource.add_value(i);
+                    } else {
+                        black_box(resource.read_counter());
+                    }
                     last_result = resource.increment();
                 }
                 last_result
             });
             black_box(result);
-
-            // Reset for next iteration
             manager.run_blocking(|resource| resource.reset());
         })
     });
 
     group.finish();
 }
+
+// -----------------------------------------------------------
+// Lock vs direct run_blocking
+// -----------------------------------------------------------
 
 fn benchmark_lock_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Lock Operations");
@@ -78,7 +97,11 @@ fn benchmark_lock_operations(c: &mut Criterion) {
             let lock = manager.lock_blocking();
             for i in 0..100 {
                 let result = lock.run_blocking(move |resource| {
-                    resource.add_value(i);
+                    if i % 10 == 0 {
+                        resource.add_value(i);
+                    } else {
+                        black_box(resource.read_counter());
+                    }
                     resource.increment()
                 });
                 black_box(result);
@@ -91,7 +114,11 @@ fn benchmark_lock_operations(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..100 {
                 let result = manager.run_blocking(move |resource| {
-                    resource.add_value(i);
+                    if i % 10 == 0 {
+                        resource.add_value(i);
+                    } else {
+                        black_box(resource.read_counter());
+                    }
                     resource.increment()
                 });
                 black_box(result);
@@ -103,127 +130,135 @@ fn benchmark_lock_operations(c: &mut Criterion) {
     group.finish();
 }
 
+// -----------------------------------------------------------
+// Contention benchmarks with scaling
+// -----------------------------------------------------------
+
 fn benchmark_mutex_comparison(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut group = c.benchmark_group("Vs Mutex");
+    let mut group = c.benchmark_group("Contention Scaling");
 
-    let manager = ResourceManager::<TestResource>::new(TestResource::default());
-    let mutex_resource = Arc::new(Mutex::new(TestResource::default()));
-    let tokio_mutex_resource = Arc::new(TokioMutex::new(TestResource::default()));
+    // Parameters
+    const OPS_PER_THREAD: usize = 10_000;
+    const THREAD_COUNTS: &[usize] = &[4, 64];
 
-    group.bench_function("blocking_manager_increment_no_contention", |b| {
-        b.iter(|| {
-            let result = manager.run_blocking(|resource| black_box(resource.increment()));
-            black_box(result);
-        })
-    });
+    for &threads in THREAD_COUNTS {
+        let manager = ResourceManager::<TestResource>::new(TestResource::default());
+        let mutex_resource = Arc::new(Mutex::new(TestResource::default()));
+        let tokio_mutex_resource = Arc::new(TokioMutex::new(TestResource::default()));
 
-    group.bench_function("async_manager_increment_no_contention", |b| {
-        b.to_async(&rt).iter(|| async {
-            let result = manager
-                .run(|resource| black_box(resource.increment()))
-                .await;
-            black_box(result);
-        })
-    });
+        // Blocking ResourceManager
+        group.bench_function(format!("manager_blocking_{}t", threads), |b| {
+            b.iter(|| {
+                std::thread::scope(|s| {
+                    let mut handles = Vec::with_capacity(threads);
+                    for _ in 0..threads {
+                        let manager_clone = manager.clone();
+                        handles.push(s.spawn(move || {
+                            for i in 0..OPS_PER_THREAD {
+                                manager_clone.run_blocking(move |resource| {
+                                    if i % 10 == 0 {
+                                        resource.add_value(i);
+                                    } else {
+                                        black_box(resource.read_counter());
+                                    }
+                                    black_box(resource.increment());
+                                });
+                            }
+                        }));
+                    }
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                });
+            })
+        });
 
-    group.bench_function("mutex_increment_no_contention", |b| {
-        let mutex_resource = mutex_resource.clone();
-        b.iter(|| {
-            let result = {
-                let mut guard = mutex_resource.lock().unwrap();
-                black_box(guard.increment())
-            };
-            black_box(result);
-        })
-    });
+        // Blocking Mutex
+        group.bench_function(format!("mutex_blocking_{}t", threads), |b| {
+            let mutex_resource = mutex_resource.clone();
+            b.iter(|| {
+                std::thread::scope(|s| {
+                    let mut handles = Vec::with_capacity(threads);
+                    for _ in 0..threads {
+                        let m = mutex_resource.clone();
+                        handles.push(s.spawn(move || {
+                            for i in 0..OPS_PER_THREAD {
+                                let mut guard = m.lock().unwrap();
+                                if i % 10 == 0 {
+                                    guard.add_value(i);
+                                } else {
+                                    black_box(guard.read_counter());
+                                }
+                                black_box(guard.increment());
+                            }
+                        }));
+                    }
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                });
+            })
+        });
 
-    group.bench_function("async_tokio_mutex_increment_no_contention", |b| {
-        let tokio_mutex_resource = tokio_mutex_resource.clone();
-        b.to_async(&rt).iter(|| async {
-            let mut guard = tokio_mutex_resource.lock().await;
-            black_box(guard.increment());
-        })
-    });
-
-    // ---------- Add contention tests ----------
-    group.bench_function("blocking_manager_increment_with_contention", |b| {
-        b.iter(|| {
-            std::thread::scope(|s| {
-                let mut handles = Vec::with_capacity(4);
-                for _ in 0..4 {
-                    handles.push(s.spawn(|| {
-                        manager.run_blocking(|resource| black_box(resource.increment()));
-                    }));
-                }
-                for h in handles {
-                    h.join().unwrap();
-                }
-            });
-        })
-    });
-
-    group.bench_function("async_manager_increment_with_contention", |b| {
-        let manager_clone = manager.clone();
-        b.to_async(&rt).iter(move || {
-            let manager = manager_clone.clone();
-            async move {
-                let futures: Vec<_> = (0..4)
-                    .map(|_| {
-                        let m = manager.clone(); // clone for each task
-                        tokio::spawn(async move {
-                            m.run(|resource| {
-                                black_box(resource.increment());
-                            })
-                            .await
-                        })
-                    })
-                    .collect();
-
-                for f in futures {
-                    f.await.unwrap();
-                }
-            }
-        })
-    });
-
-    group.bench_function("mutex_increment_with_contention", |b| {
-        let mutex_resource = mutex_resource.clone();
-        b.iter(|| {
-            std::thread::scope(|s| {
-                let mut handles = Vec::with_capacity(4);
-                for _ in 0..4 {
-                    let mutex_clone = mutex_resource.clone();
-                    handles.push(s.spawn(move || {
-                        let mut guard = mutex_clone.lock().unwrap();
-                        black_box(guard.increment());
-                    }));
-                }
-                for h in handles {
-                    h.join().unwrap();
+        // Async ResourceManager
+        group.bench_function(format!("manager_async_{}t", threads), |b| {
+            let manager = manager.clone();
+            b.to_async(&rt).iter(|| {
+                let manager = manager.clone();
+                async move {
+                    let mut join_handles = Vec::with_capacity(threads);
+                    for _ in 0..threads {
+                        let m = manager.clone();
+                        join_handles.push(tokio::spawn(async move {
+                            for i in 0..OPS_PER_THREAD {
+                                m.run(move |resource| {
+                                    if i % 10 == 0 {
+                                        resource.add_value(i);
+                                    } else {
+                                        black_box(resource.read_counter());
+                                    }
+                                    black_box(resource.increment());
+                                })
+                                .await;
+                            }
+                        }));
+                    }
+                    for j in join_handles {
+                        j.await.unwrap();
+                    }
                 }
             });
-        })
-    });
+        });
 
-    group.bench_function("async_tokio_mutex_increment_with_contention", |b| {
-        let tokio_mutex_resource = tokio_mutex_resource.clone();
-        b.to_async(&rt).iter(|| async {
-            let futures: Vec<_> = (0..4)
-                .map(|_| {
-                    let resource = tokio_mutex_resource.clone();
-                    tokio::spawn(async move {
-                        let mut guard = resource.lock().await;
-                        black_box(guard.increment());
-                    })
-                })
-                .collect();
-
-            for f in futures {
-                f.await.unwrap();
-            }
-        })
-    });
+        // Async Tokio Mutex
+        group.bench_function(format!("tokio_mutex_{}t", threads), |b| {
+            let tokio_mutex_resource = tokio_mutex_resource.clone();
+            b.to_async(&rt).iter(|| {
+                let resource = tokio_mutex_resource.clone();
+                async move {
+                    let mut join_handles = Vec::with_capacity(threads);
+                    for _ in 0..threads {
+                        let r = resource.clone();
+                        join_handles.push(tokio::spawn(async move {
+                            for i in 0..OPS_PER_THREAD {
+                                let mut guard = r.lock().await;
+                                if i % 10 == 0 {
+                                    guard.add_value(i);
+                                } else {
+                                    black_box(guard.read_counter());
+                                }
+                                black_box(guard.increment());
+                            }
+                        }));
+                    }
+                    for j in join_handles {
+                        j.await.unwrap();
+                    }
+                }
+            });
+        });
+    }
 
     group.finish();
 }
