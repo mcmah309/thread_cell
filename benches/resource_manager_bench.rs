@@ -104,16 +104,25 @@ fn benchmark_lock_operations(c: &mut Criterion) {
 }
 
 fn benchmark_mutex_comparison(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("Vs Mutex");
 
-    // Setup both approaches
     let manager = ResourceManager::<TestResource>::new(TestResource::default());
     let mutex_resource = Arc::new(Mutex::new(TestResource::default()));
     let tokio_mutex_resource = Arc::new(TokioMutex::new(TestResource::default()));
 
-    group.bench_function("manager_increment_no_contention", |b| {
+    group.bench_function("blocking_manager_increment_no_contention", |b| {
         b.iter(|| {
             let result = manager.run_blocking(|resource| black_box(resource.increment()));
+            black_box(result);
+        })
+    });
+
+    group.bench_function("async_manager_increment_no_contention", |b| {
+        b.to_async(&rt).iter(|| async {
+            let result = manager
+                .run(|resource| black_box(resource.increment()))
+                .await;
             black_box(result);
         })
     });
@@ -129,24 +138,90 @@ fn benchmark_mutex_comparison(c: &mut Criterion) {
         })
     });
 
-    // Async comparison
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
-    group.bench_function("async_manager_increment_no_contention", |b| {
-        b.to_async(&rt).iter(|| async {
-            let result = manager.run(|resource| black_box(resource.increment())).await;
-            black_box(result);
-        })
-    });
-
     group.bench_function("async_tokio_mutex_increment_no_contention", |b| {
         let tokio_mutex_resource = tokio_mutex_resource.clone();
         b.to_async(&rt).iter(|| async {
-            let result = {
-                let mut guard = tokio_mutex_resource.lock().await;
-                black_box(guard.increment())
-            };
-            black_box(result);
+            let mut guard = tokio_mutex_resource.lock().await;
+            black_box(guard.increment());
+        })
+    });
+
+    // ---------- Add contention tests ----------
+    group.bench_function("blocking_manager_increment_with_contention", |b| {
+        b.iter(|| {
+            std::thread::scope(|s| {
+                let mut handles = Vec::with_capacity(4);
+                for _ in 0..4 {
+                    handles.push(s.spawn(|| {
+                        manager.run_blocking(|resource| black_box(resource.increment()));
+                    }));
+                }
+                for h in handles {
+                    h.join().unwrap();
+                }
+            });
+        })
+    });
+
+    group.bench_function("async_manager_increment_with_contention", |b| {
+        let manager_clone = manager.clone();
+        b.to_async(&rt).iter(move || {
+            let manager = manager_clone.clone();
+            async move {
+                let futures: Vec<_> = (0..4)
+                    .map(|_| {
+                        let m = manager.clone(); // clone for each task
+                        tokio::spawn(async move {
+                            m.run(|resource| {
+                                black_box(resource.increment());
+                            })
+                            .await
+                        })
+                    })
+                    .collect();
+
+                for f in futures {
+                    f.await.unwrap();
+                }
+            }
+        })
+    });
+
+    group.bench_function("mutex_increment_with_contention", |b| {
+        let mutex_resource = mutex_resource.clone();
+        b.iter(|| {
+            std::thread::scope(|s| {
+                let mut handles = Vec::with_capacity(4);
+                for _ in 0..4 {
+                    let mutex_clone = mutex_resource.clone();
+                    handles.push(s.spawn(move || {
+                        let mut guard = mutex_clone.lock().unwrap();
+                        black_box(guard.increment());
+                    }));
+                }
+                for h in handles {
+                    h.join().unwrap();
+                }
+            });
+        })
+    });
+
+    group.bench_function("async_tokio_mutex_increment_with_contention", |b| {
+        let tokio_mutex_resource = tokio_mutex_resource.clone();
+        b.to_async(&rt).iter(|| async {
+            let futures: Vec<_> = (0..4)
+                .map(|_| {
+                    let resource = tokio_mutex_resource.clone();
+                    tokio::spawn(async move {
+                        let mut guard = resource.lock().await;
+                        black_box(guard.increment());
+                    })
+                })
+                .collect();
+
+            for f in futures {
+                f.await.unwrap();
+            }
         })
     });
 
