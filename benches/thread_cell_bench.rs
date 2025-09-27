@@ -94,7 +94,7 @@ fn benchmark_lock_operations(c: &mut Criterion) {
 
     group.bench_function("with_lock_no_contention", |b| {
         b.iter(|| {
-            let lock = manager.lock_blocking();
+            let lock = manager.session_blocking();
             for i in 0..100 {
                 let result = lock.run_blocking(move |resource| {
                     if i % 10 == 0 {

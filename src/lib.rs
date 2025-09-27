@@ -4,8 +4,8 @@ use tracing::warn;
 /// Messages sent to the manager thread
 enum ThreadCellMessage<T> {
     Run(Box<dyn FnOnce(&mut T) + Send>),
-    GetLockSync(crossbeam::channel::Sender<ThreadCellLock<T>>),
-    GetLockAsync(tokio::sync::oneshot::Sender<ThreadCellLock<T>>),
+    GetSessionSync(crossbeam::channel::Sender<ThreadCellSession<T>>),
+    GetSessionAsync(tokio::sync::oneshot::Sender<ThreadCellSession<T>>),
 }
 
 /// A message type for session callbacks
@@ -13,13 +13,14 @@ type SessionMsg<T> = Box<dyn FnOnce(&mut T) + Send>;
 
 static SESSION_ERROR_MESSAGE: &str = "Session thread has panicked or resource was dropped";
 
-/// A "lock" on the resource held by the thread until dropped.
-/// While held, this is the only way to access the resource.
-pub struct ThreadCellLock<T> {
+/// A session with exclusive access to the resource held by the thread.
+/// While held, this is the only way to access the resource. It is possible to create a "deadlock"
+/// if a `ThreadCellSession` is requested while one is already held.
+pub struct ThreadCellSession<T> {
     sender: crossbeam::channel::Sender<SessionMsg<T>>,
 }
 
-impl<T> ThreadCellLock<T> {
+impl<T> ThreadCellSession<T> {
     pub fn run_blocking<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R + Send + 'static,
@@ -53,8 +54,10 @@ impl<T> ThreadCellLock<T> {
 
 static MANAGER_ERROR_MESSAGE: &str = "Manager thread has panicked";
 
-/// A cell that holds a value bound to a single thread. Thus T can be non-`Send` and/or non-`Sync`,
-/// but `ThreadCell<T>` is always `Send`/`Sync`. Alternative to `Arc<Mutex<T>>`.
+/// A cell that holds a value bound to a single thread. Thus `T` can be non-`Send` and/or non-`Sync`,
+/// but `ThreadCell<T>` is always `Send`/`Sync`. Access is provided through message passing, so no
+/// internal locking is used. But a lock-like `ThreadCellSession` can be acquired to gain exclusive
+/// access to the underlying resource while held.
 pub struct ThreadCell<T: 'static> {
     sender: crossbeam::channel::Sender<ThreadCellMessage<T>>,
 }
@@ -76,18 +79,18 @@ impl<T: Send> ThreadCell<T> {
             while let Ok(msg) = rx.recv() {
                 match msg {
                     ThreadCellMessage::Run(f) => f(&mut resource),
-                    ThreadCellMessage::GetLockSync(responder) => {
+                    ThreadCellMessage::GetSessionSync(responder) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        if responder.send(ThreadCellLock { sender: stx }).is_err() {
+                        if responder.send(ThreadCellSession { sender: stx }).is_err() {
                             warn!("Lock responder dropped before responding");
                         }
                         while let Ok(f) = srx.recv() {
                             f(&mut resource);
                         }
                     }
-                    ThreadCellMessage::GetLockAsync(sender) => {
+                    ThreadCellMessage::GetSessionAsync(sender) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        if sender.send(ThreadCellLock { sender: stx }).is_err() {
+                        if sender.send(ThreadCellSession { sender: stx }).is_err() {
                             warn!("Lock responder dropped before responding");
                         }
                         while let Ok(f) = srx.recv() {
@@ -112,18 +115,18 @@ impl<T> ThreadCell<T> {
             while let Ok(msg) = rx.recv() {
                 match msg {
                     ThreadCellMessage::Run(f) => f(&mut resource),
-                    ThreadCellMessage::GetLockSync(responder) => {
+                    ThreadCellMessage::GetSessionSync(responder) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        if responder.send(ThreadCellLock { sender: stx }).is_err() {
+                        if responder.send(ThreadCellSession { sender: stx }).is_err() {
                             warn!("Lock responder dropped before responding");
                         }
                         while let Ok(f) = srx.recv() {
                             f(&mut resource);
                         }
                     }
-                    ThreadCellMessage::GetLockAsync(sender) => {
+                    ThreadCellMessage::GetSessionAsync(sender) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        if sender.send(ThreadCellLock { sender: stx }).is_err() {
+                        if sender.send(ThreadCellSession { sender: stx }).is_err() {
                             warn!("Lock responder dropped before responding");
                         }
                         while let Ok(f) = srx.recv() {
@@ -167,18 +170,18 @@ impl<T> ThreadCell<T> {
         rx.await.expect(MANAGER_ERROR_MESSAGE)
     }
 
-    pub fn lock_blocking(&self) -> ThreadCellLock<T> {
+    pub fn session_blocking(&self) -> ThreadCellSession<T> {
         let (tx, rx) = crossbeam::channel::bounded(1);
         self.sender
-            .send(ThreadCellMessage::GetLockSync(tx))
+            .send(ThreadCellMessage::GetSessionSync(tx))
             .expect(MANAGER_ERROR_MESSAGE);
         rx.recv().expect(MANAGER_ERROR_MESSAGE)
     }
 
-    pub async fn lock(&self) -> ThreadCellLock<T> {
+    pub async fn session(&self) -> ThreadCellSession<T> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
-            .send(ThreadCellMessage::GetLockAsync(tx))
+            .send(ThreadCellMessage::GetSessionAsync(tx))
             .expect(MANAGER_ERROR_MESSAGE);
         rx.await.expect(MANAGER_ERROR_MESSAGE)
     }
@@ -276,9 +279,9 @@ mod tests {
     }
 
     #[test]
-    fn lock_blocking_gives_mutable_access() {
+    fn session_blocking_gives_mutable_access() {
         let cell = ThreadCell::new(TestResource::default());
-        let lock = cell.lock_blocking();
+        let lock = cell.session_blocking();
         let value = lock.run_blocking(|res| {
             res.increment();
             res.increment()
@@ -287,9 +290,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn async_lock_works() {
+    async fn async_session_works() {
         let cell = ThreadCell::new(TestResource::default());
-        let lock = cell.lock().await;
+        let lock = cell.session().await;
         let value = lock.run(|res| res.increment()).await;
         assert_eq!(value, 1);
     }
