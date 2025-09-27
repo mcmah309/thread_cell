@@ -1,5 +1,7 @@
 [package]
 name = "thread_cell"
+description = "A safe wrapper for non-Send/Sync types that pins them to a single thread and provides a handle that can be moved across threads"
+license = "Apache-2.0"
 version = "0.1.0"
 edition = "2024"
 
