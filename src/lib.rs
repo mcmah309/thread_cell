@@ -64,7 +64,7 @@ impl<T: 'static> Clone for ThreadCell<T> {
     }
 }
 
-impl<T: Send + 'static> ThreadCell<T> {
+impl<T: Send> ThreadCell<T> {
     /// Creates new
     pub fn new(mut resource: T) -> Self {
         let (tx, rx) = crossbeam::channel::unbounded::<ThreadCellMessage<T>>();
@@ -99,7 +99,7 @@ impl<T: Send + 'static> ThreadCell<T> {
     }
 }
 
-impl<T: Send> ThreadCell<T> {
+impl<T> ThreadCell<T> {
     /// Creates a new when `T` is not `Send` but a function to create `T` is
     pub fn new_with<F: FnOnce() -> T + Send + 'static>(resource_fn: F) -> Self {
         let (tx, rx) = crossbeam::channel::unbounded::<ThreadCellMessage<T>>();
