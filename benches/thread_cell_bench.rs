@@ -1,4 +1,4 @@
-use actor_cell::ResourceManager;
+use thread_cell::ThreadCell;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
@@ -42,7 +42,7 @@ impl TestResource {
 fn benchmark_batch_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Individual vs Batch Operations");
 
-    let manager = ResourceManager::<TestResource>::new(TestResource::default());
+    let manager = ThreadCell::<TestResource>::new(TestResource::default());
 
     group.bench_function("individual", |b| {
         b.iter(|| {
@@ -90,7 +90,7 @@ fn benchmark_batch_operations(c: &mut Criterion) {
 fn benchmark_lock_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Lock Operations");
 
-    let manager = ResourceManager::<TestResource>::new(TestResource::default());
+    let manager = ThreadCell::<TestResource>::new(TestResource::default());
 
     group.bench_function("with_lock_no_contention", |b| {
         b.iter(|| {
@@ -143,7 +143,7 @@ fn benchmark_mutex_comparison(c: &mut Criterion) {
     const THREAD_COUNTS: &[usize] = &[4, 64];
 
     for &threads in THREAD_COUNTS {
-        let manager = ResourceManager::<TestResource>::new(TestResource::default());
+        let manager = ThreadCell::<TestResource>::new(TestResource::default());
         let mutex_resource = Arc::new(Mutex::new(TestResource::default()));
         let tokio_mutex_resource = Arc::new(TokioMutex::new(TestResource::default()));
 
