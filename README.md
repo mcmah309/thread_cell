@@ -31,7 +31,7 @@ use thread_cell::ThreadCell;
 assert_send::<ThreadCell<NonSendSync>>();
 assert_sync::<ThreadCell<NonSendSync>>();
 
-// ❌ Does not compile — Arc<Mutex<T>> requires T: Send + Sync
+// ❌ Does not compile — Arc<Mutex<T>> requires T: Send
 // assert_send::<Arc<std::sync::Mutex<NonSendSync>>>();
 // assert_sync::<Arc<std::sync::Mutex<NonSendSync>>>();
 ```
