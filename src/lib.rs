@@ -3,17 +3,17 @@
 
 use std::thread;
 
+/// A message type for session callbacks
+type Msg<T> = Box<dyn FnOnce(&mut T) + Send>;
+
 /// Messages sent to the manager thread
 enum ThreadCellMessage<T> {
-    Run(Box<dyn FnOnce(&mut T) + Send>),
+    Run(Msg<T>),
     GetSessionSync(crossbeam::channel::Sender<ThreadCellSession<T>>),
     #[cfg(feature = "tokio")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
     GetSessionAsync(tokio::sync::oneshot::Sender<ThreadCellSession<T>>),
 }
-
-/// A message type for session callbacks
-type SessionMsg<T> = Box<dyn FnOnce(&mut T) + Send>;
 
 static SESSION_ERROR_MESSAGE: &str = "ThreadCell thread has panicked or was dropped";
 
@@ -21,7 +21,7 @@ static SESSION_ERROR_MESSAGE: &str = "ThreadCell thread has panicked or was drop
 /// While held, this is the only way to access the resource. It is possible to create a "deadlock"
 /// if a `ThreadCellSession` is requested while one is already held.
 pub struct ThreadCellSession<T> {
-    sender: crossbeam::channel::Sender<SessionMsg<T>>,
+    sender: crossbeam::channel::Sender<Msg<T>>,
 }
 
 impl<T> ThreadCellSession<T> {
@@ -34,7 +34,7 @@ impl<T> ThreadCellSession<T> {
         self.sender
             .send(Box::new(move |resource| {
                 let res = f(resource);
-                let _ = tx.send(res);
+                tx.send(res).unwrap();
             }))
             .expect(SESSION_ERROR_MESSAGE);
         rx.recv().expect(SESSION_ERROR_MESSAGE)
@@ -51,14 +51,15 @@ impl<T> ThreadCellSession<T> {
         self.sender
             .send(Box::new(move |resource| {
                 let res = f(resource);
-                let _ = tx.send(res);
+                // Outer receiver is waiting
+                tx.send(res).ok().unwrap();
             }))
             .expect(SESSION_ERROR_MESSAGE);
         rx.await.expect(SESSION_ERROR_MESSAGE)
     }
 }
 
-static THREAD_ERROR_MESSAGE: &str = "ThreadCell thread has panicked";
+static THREAD_CELL_ERROR_MESSAGE: &str = "ThreadCell thread has panicked";
 
 /// A cell that holds a value bound to a single thread. Thus `T` can be non-`Send` and/or non-`Sync`,
 /// but `ThreadCell<T>` is always `Send`/`Sync`. Access is provided through message passing, so no
@@ -78,30 +79,11 @@ impl<T: 'static> Clone for ThreadCell<T> {
 
 impl<T: Send> ThreadCell<T> {
     /// Creates new
-    pub fn new(mut resource: T) -> Self {
+    pub fn new(resource: T) -> Self {
         let (tx, rx) = crossbeam::channel::unbounded::<ThreadCellMessage<T>>();
 
         thread::spawn(move || {
-            while let Ok(msg) = rx.recv() {
-                match msg {
-                    ThreadCellMessage::Run(f) => f(&mut resource),
-                    ThreadCellMessage::GetSessionSync(responder) => {
-                        let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        let _ = responder.send(ThreadCellSession { sender: stx });
-                        while let Ok(f) = srx.recv() {
-                            f(&mut resource);
-                        }
-                    }
-                    #[cfg(feature = "tokio")]
-                    ThreadCellMessage::GetSessionAsync(sender) => {
-                        let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        let _ = sender.send(ThreadCellSession { sender: stx });
-                        while let Ok(f) = srx.recv() {
-                            f(&mut resource);
-                        }
-                    }
-                }
-            }
+            sync_handle(rx, resource);
         });
 
         Self { sender: tx }
@@ -114,27 +96,8 @@ impl<T> ThreadCell<T> {
         let (tx, rx) = crossbeam::channel::unbounded::<ThreadCellMessage<T>>();
 
         thread::spawn(move || {
-            let mut resource = resource_fn();
-            while let Ok(msg) = rx.recv() {
-                match msg {
-                    ThreadCellMessage::Run(f) => f(&mut resource),
-                    ThreadCellMessage::GetSessionSync(responder) => {
-                        let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        let _ = responder.send(ThreadCellSession { sender: stx });
-                        while let Ok(f) = srx.recv() {
-                            f(&mut resource);
-                        }
-                    }
-                    #[cfg(feature = "tokio")]
-                    ThreadCellMessage::GetSessionAsync(sender) => {
-                        let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
-                        let _ = sender.send(ThreadCellSession { sender: stx });
-                        while let Ok(f) = srx.recv() {
-                            f(&mut resource);
-                        }
-                    }
-                }
-            }
+            let resource = resource_fn();
+            sync_handle(rx, resource);
         });
 
         Self { sender: tx }
@@ -149,10 +112,11 @@ impl<T> ThreadCell<T> {
         self.sender
             .send(ThreadCellMessage::Run(Box::new(move |resource| {
                 let res = f(resource);
-                let _ = tx.send(res);
+                // Outer receiver is waiting
+                tx.send(res).ok().unwrap();
             })))
-            .expect(THREAD_ERROR_MESSAGE);
-        rx.recv().expect(THREAD_ERROR_MESSAGE)
+            .expect(THREAD_CELL_ERROR_MESSAGE);
+        rx.recv().expect(THREAD_CELL_ERROR_MESSAGE)
     }
 
     #[cfg(feature = "tokio")]
@@ -166,18 +130,19 @@ impl<T> ThreadCell<T> {
         self.sender
             .send(ThreadCellMessage::Run(Box::new(move |resource| {
                 let res = f(resource);
-                let _ = tx.send(res);
+                // Outer receiver is waiting
+                tx.send(res).ok().unwrap();
             })))
-            .expect(THREAD_ERROR_MESSAGE);
-        rx.await.expect(THREAD_ERROR_MESSAGE)
+            .expect(THREAD_CELL_ERROR_MESSAGE);
+        rx.await.expect(THREAD_CELL_ERROR_MESSAGE)
     }
 
     pub fn session_blocking(&self) -> ThreadCellSession<T> {
         let (tx, rx) = crossbeam::channel::bounded(1);
         self.sender
             .send(ThreadCellMessage::GetSessionSync(tx))
-            .expect(THREAD_ERROR_MESSAGE);
-        rx.recv().expect(THREAD_ERROR_MESSAGE)
+            .expect(THREAD_CELL_ERROR_MESSAGE);
+        rx.recv().expect(THREAD_CELL_ERROR_MESSAGE)
     }
 
     #[cfg(feature = "tokio")]
@@ -186,8 +151,8 @@ impl<T> ThreadCell<T> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(ThreadCellMessage::GetSessionAsync(tx))
-            .expect(THREAD_ERROR_MESSAGE);
-        rx.await.expect(THREAD_ERROR_MESSAGE)
+            .expect(THREAD_CELL_ERROR_MESSAGE);
+        rx.await.expect(THREAD_CELL_ERROR_MESSAGE)
     }
 }
 
@@ -240,6 +205,38 @@ impl<T: Send + Clone> ThreadCell<T> {
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
     pub async fn get(&self) -> T {
         self.run(|res| res.clone()).await
+    }
+}
+
+const GET_SESSION_RESPONSE_ERROR_MESSAGE: &str =
+    "A get session request should always be waiting for a response";
+
+fn sync_handle<T>(rx: crossbeam::channel::Receiver<ThreadCellMessage<T>>, mut resource: T) {
+    while let Ok(msg) = rx.recv() {
+        match msg {
+            ThreadCellMessage::Run(f) => f(&mut resource),
+            ThreadCellMessage::GetSessionSync(responder) => {
+                let (stx, srx) = crossbeam::channel::unbounded::<Msg<T>>();
+                responder
+                    .send(ThreadCellSession { sender: stx })
+                    .ok()
+                    .expect(GET_SESSION_RESPONSE_ERROR_MESSAGE);
+                while let Ok(f) = srx.recv() {
+                    f(&mut resource);
+                }
+            }
+            #[cfg(feature = "tokio")]
+            ThreadCellMessage::GetSessionAsync(responder) => {
+                let (stx, srx) = crossbeam::channel::unbounded::<Msg<T>>();
+                responder
+                    .send(ThreadCellSession { sender: stx })
+                    .ok()
+                    .expect(GET_SESSION_RESPONSE_ERROR_MESSAGE);
+                while let Ok(f) = srx.recv() {
+                    f(&mut resource);
+                }
+            }
+        }
     }
 }
 
