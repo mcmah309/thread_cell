@@ -3,7 +3,6 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
 
-// Heavier test resource to make contention more realistic
 #[derive(Default)]
 struct TestResource {
     counter: usize,
@@ -12,7 +11,6 @@ struct TestResource {
 
 impl TestResource {
     fn increment(&mut self) -> usize {
-        // Simulate some CPU work
         for x in self.data.iter_mut().take(8) {
             *x = x.wrapping_add(1);
         }
@@ -21,7 +19,6 @@ impl TestResource {
     }
 
     fn read_counter(&self) -> usize {
-        // Simulate a read workload
         self.data.iter().take(4).fold(self.counter, |acc, &x| acc.wrapping_add(x))
     }
 
@@ -35,9 +32,7 @@ impl TestResource {
     }
 }
 
-// -----------------------------------------------------------
-// Batch operations benchmark
-// -----------------------------------------------------------
+//************************************************************************//
 
 fn benchmark_batch_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Individual vs Batch Operations");
@@ -83,9 +78,7 @@ fn benchmark_batch_operations(c: &mut Criterion) {
     group.finish();
 }
 
-// -----------------------------------------------------------
-// Lock vs direct run_blocking
-// -----------------------------------------------------------
+//************************************************************************//
 
 fn benchmark_lock_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Lock Operations");
@@ -130,9 +123,7 @@ fn benchmark_lock_operations(c: &mut Criterion) {
     group.finish();
 }
 
-// -----------------------------------------------------------
-// Contention benchmarks with scaling
-// -----------------------------------------------------------
+//************************************************************************//
 
 fn benchmark_mutex_comparison(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();

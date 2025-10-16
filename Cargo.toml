@@ -18,9 +18,14 @@ default = []
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio = { version = "1", features = ["full"] }
 
-# `cargo bench --all-features`
+# `cargo bench --all-features --bench thread_cell_bench`
 [[bench]]
 name = "thread_cell_bench"
+harness = false
+required-features = ["tokio"]
+
+[[bench]]
+name = "readme_claim"
 harness = false
 required-features = ["tokio"]
 
