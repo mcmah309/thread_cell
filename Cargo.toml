@@ -8,7 +8,7 @@ repository = "https://github.com/mcmah309/thread_cell"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1", features = ["sync"], optional = true }
+tokio = { version = "1", features = ["sync", "rt"], optional = true }
 crossbeam = "0.8"
 
 [features]
