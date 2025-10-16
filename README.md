@@ -106,23 +106,26 @@ Final score: 35
 
 ## When to Use ThreadCell
 
-✅ You have a **non-`Send` type** but still want to share and mutate it safely across threads.
-✅ You want **serialized access** without locks (no risk of deadlocks).
-✅ You need **async-friendly** access to such data.
+Each call with `ThreadCell` involves message passing to a background thread. This may be faster than a highly contended mutex for some workloads, but also may be slower for very fine-grained access patterns. If `T: Send + Sync` default to using a regular concurrent lock - `Arc<Mutex<T>>`.
 
-❌ Use `Arc<Mutex<T>>` if `T: Send + Sync` and you just want a regular concurrent lock.
+When dealing with `!Send` types and still wanting to mutate it safely across threads, use `ThreadCell`.
 
----
+Use case:
+```rust
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::sync::Arc;
+use std::sync::RwLock;
 
-## Performance Notes
+struct NonSendSync {
+    parent: Rc<RefCell<NonSendSync>>,
+    children: Vec<Rc<RefCell<NonSendSync>>>,
+}
 
-* Each call involves **message passing** to a background thread. This may be faster than a contended mutex for many workloads, but also may be slower for very fine-grained access patterns.
+struct SendSync {
+    parent: Arc<RwLock<SendSync>>,
+    children: Vec<Arc<RwLock<SendSync>>>,
+}
+```
 
----
-
-## Safety
-
-`ThreadCell<T>` guarantees:
-
-* All access to `T` happens on the same thread.
-* No data races, even if `T` is `!Send` or `!Sync`.
+Operations on a `ThreadCell<NonSendSync>` is usually faster than operations on a `Arc<Mutex<SendSync>>`.
