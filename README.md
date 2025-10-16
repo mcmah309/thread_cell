@@ -57,13 +57,13 @@ fn main() {
     // Rc<RefCell<_>> is !Send and !Sync
     let shared = ThreadCell::new_with(|| Rc::new(RefCell::new(GameState { score: 0 })));
 
-    // Example: synchronous access
+    // synchronous access
     shared.run_blocking(|state| {
         state.borrow_mut().score += 10;
         println!("Score after sync update: {}", state.borrow().score);
     });
 
-    // Example: async access (e.g. from tokio tasks)
+    // async access - `tokio` feature flag
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on({
         let shared = shared.clone();
@@ -93,7 +93,6 @@ fn main() {
         }
     });
 
-    // Final value (safe to access again)
     let final_score = shared.run_blocking(|state| state.borrow().score);
     println!("Final score: {final_score}");
 }
