@@ -208,16 +208,26 @@ impl<T: Send + Clone> ThreadCell<T> {
     }
 }
 
+#[cfg(feature = "tokio")]
+thread_local! {
+    static RUNTIME: std::cell::OnceCell<tokio::runtime::Runtime>  = const { std::cell::OnceCell::new() };
+}
+
 /// Run a future to completion on the current [`ThreadCell`].
 /// This should only ever be called from the top level closure of 
 /// [`ThreadCell::run_blocking`] or [`ThreadCellSession::run`].
+/// Will panic if called nested.
 #[cfg(feature = "tokio")]
-#[inline(always)]
-pub fn block_on<F: Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap().block_on(future)
+pub fn run_local<F: Future>(future: F) -> F::Output {
+    RUNTIME.with(|cell| {
+        let rt = cell.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        });
+        rt.block_on(future)
+    })
 }
 
 const GET_SESSION_RESPONSE_ERROR_MESSAGE: &str =
@@ -372,12 +382,12 @@ mod tests {
 
     #[cfg(feature = "tokio")]
     #[tokio::test(flavor = "current_thread")]
-    async fn block_on_works() {
+    async fn run_local_works() {
         let cell = ThreadCell::new(TestResource::default());
         let mut value_to_move = TestResource::default();
         let value_to_move_returned = cell.run_blocking(|res| {
             res.increment();
-            block_on(async move {
+            run_local(async move {
                 res.increment();
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 value_to_move.increment();
