@@ -15,7 +15,7 @@ enum ThreadCellMessage<T> {
 /// A message type for session callbacks
 type SessionMsg<T> = Box<dyn FnOnce(&mut T) + Send>;
 
-static SESSION_ERROR_MESSAGE: &str = "Session thread has panicked or resource was dropped";
+static SESSION_ERROR_MESSAGE: &str = "ThreadCell thread has panicked or was dropped";
 
 /// A session with exclusive access to the resource held by the thread.
 /// While held, this is the only way to access the resource. It is possible to create a "deadlock"
@@ -58,7 +58,7 @@ impl<T> ThreadCellSession<T> {
     }
 }
 
-static MANAGER_ERROR_MESSAGE: &str = "Manager thread has panicked";
+static THREAD_ERROR_MESSAGE: &str = "ThreadCell thread has panicked";
 
 /// A cell that holds a value bound to a single thread. Thus `T` can be non-`Send` and/or non-`Sync`,
 /// but `ThreadCell<T>` is always `Send`/`Sync`. Access is provided through message passing, so no
@@ -151,8 +151,8 @@ impl<T> ThreadCell<T> {
                 let res = f(resource);
                 let _ = tx.send(res);
             })))
-            .expect(MANAGER_ERROR_MESSAGE);
-        rx.recv().expect(MANAGER_ERROR_MESSAGE)
+            .expect(THREAD_ERROR_MESSAGE);
+        rx.recv().expect(THREAD_ERROR_MESSAGE)
     }
 
     #[cfg(feature = "tokio")]
@@ -168,16 +168,16 @@ impl<T> ThreadCell<T> {
                 let res = f(resource);
                 let _ = tx.send(res);
             })))
-            .expect(MANAGER_ERROR_MESSAGE);
-        rx.await.expect(MANAGER_ERROR_MESSAGE)
+            .expect(THREAD_ERROR_MESSAGE);
+        rx.await.expect(THREAD_ERROR_MESSAGE)
     }
 
     pub fn session_blocking(&self) -> ThreadCellSession<T> {
         let (tx, rx) = crossbeam::channel::bounded(1);
         self.sender
             .send(ThreadCellMessage::GetSessionSync(tx))
-            .expect(MANAGER_ERROR_MESSAGE);
-        rx.recv().expect(MANAGER_ERROR_MESSAGE)
+            .expect(THREAD_ERROR_MESSAGE);
+        rx.recv().expect(THREAD_ERROR_MESSAGE)
     }
 
     #[cfg(feature = "tokio")]
@@ -186,8 +186,8 @@ impl<T> ThreadCell<T> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(ThreadCellMessage::GetSessionAsync(tx))
-            .expect(MANAGER_ERROR_MESSAGE);
-        rx.await.expect(MANAGER_ERROR_MESSAGE)
+            .expect(THREAD_ERROR_MESSAGE);
+        rx.await.expect(THREAD_ERROR_MESSAGE)
     }
 }
 
