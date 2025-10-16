@@ -42,12 +42,12 @@ impl TestResource {
 fn benchmark_batch_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Individual vs Batch Operations");
 
-    let manager = ThreadCell::<TestResource>::new(TestResource::default());
+    let thread_cell = ThreadCell::<TestResource>::new(TestResource::default());
 
     group.bench_function("individual", |b| {
         b.iter(|| {
             for i in 0..100 {
-                let result = manager.run_blocking(move |resource| {
+                let result = thread_cell.run_blocking(move |resource| {
                     if i % 10 == 0 {
                         resource.add_value(i);
                     } else {
@@ -57,13 +57,13 @@ fn benchmark_batch_operations(c: &mut Criterion) {
                 });
                 black_box(result);
             }
-            manager.run_blocking(|resource| resource.reset());
+            thread_cell.run_blocking(|resource| resource.reset());
         })
     });
 
     group.bench_function("batched", |b| {
         b.iter(|| {
-            let result = manager.run_blocking(|resource| {
+            let result = thread_cell.run_blocking(|resource| {
                 let mut last_result = 0;
                 for i in 0..100 {
                     if i % 10 == 0 {
@@ -76,7 +76,7 @@ fn benchmark_batch_operations(c: &mut Criterion) {
                 last_result
             });
             black_box(result);
-            manager.run_blocking(|resource| resource.reset());
+            thread_cell.run_blocking(|resource| resource.reset());
         })
     });
 
@@ -90,11 +90,11 @@ fn benchmark_batch_operations(c: &mut Criterion) {
 fn benchmark_lock_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Lock Operations");
 
-    let manager = ThreadCell::<TestResource>::new(TestResource::default());
+    let thread_cell = ThreadCell::<TestResource>::new(TestResource::default());
 
     group.bench_function("with_lock_no_contention", |b| {
         b.iter(|| {
-            let lock = manager.session_blocking();
+            let lock = thread_cell.session_blocking();
             for i in 0..100 {
                 let result = lock.run_blocking(move |resource| {
                     if i % 10 == 0 {
@@ -113,7 +113,7 @@ fn benchmark_lock_operations(c: &mut Criterion) {
     group.bench_function("without_lock_no_contention", |b| {
         b.iter(|| {
             for i in 0..100 {
-                let result = manager.run_blocking(move |resource| {
+                let result = thread_cell.run_blocking(move |resource| {
                     if i % 10 == 0 {
                         resource.add_value(i);
                     } else {
@@ -123,7 +123,7 @@ fn benchmark_lock_operations(c: &mut Criterion) {
                 });
                 black_box(result);
             }
-            manager.run_blocking(|resource| resource.reset());
+            thread_cell.run_blocking(|resource| resource.reset());
         })
     });
 
@@ -143,20 +143,20 @@ fn benchmark_mutex_comparison(c: &mut Criterion) {
     const THREAD_COUNTS: &[usize] = &[4, 64];
 
     for &threads in THREAD_COUNTS {
-        let manager = ThreadCell::<TestResource>::new(TestResource::default());
+        let thread_cell = ThreadCell::<TestResource>::new(TestResource::default());
         let mutex_resource = Arc::new(Mutex::new(TestResource::default()));
         let tokio_mutex_resource = Arc::new(TokioMutex::new(TestResource::default()));
 
-        // Blocking ResourceManager
-        group.bench_function(format!("manager_blocking_{}t", threads), |b| {
+        // Blocking ThreadCell
+        group.bench_function(format!("thread_cell_blocking_{}t", threads), |b| {
             b.iter(|| {
                 std::thread::scope(|s| {
                     let mut handles = Vec::with_capacity(threads);
                     for _ in 0..threads {
-                        let manager_clone = manager.clone();
+                        let thread_cell_clone = thread_cell.clone();
                         handles.push(s.spawn(move || {
                             for i in 0..OPS_PER_THREAD {
-                                manager_clone.run_blocking(move |resource| {
+                                thread_cell_clone.run_blocking(move |resource| {
                                     if i % 10 == 0 {
                                         resource.add_value(i);
                                     } else {
@@ -201,15 +201,15 @@ fn benchmark_mutex_comparison(c: &mut Criterion) {
             })
         });
 
-        // Async ResourceManager
-        group.bench_function(format!("manager_async_{}t", threads), |b| {
-            let manager = manager.clone();
+        // Async ThreadCell
+        group.bench_function(format!("thread_cell_async_{}t", threads), |b| {
+            let thread_cell = thread_cell.clone();
             b.to_async(&rt).iter(|| {
-                let manager = manager.clone();
+                let thread_cell = thread_cell.clone();
                 async move {
                     let mut join_handles = Vec::with_capacity(threads);
                     for _ in 0..threads {
-                        let m = manager.clone();
+                        let m = thread_cell.clone();
                         join_handles.push(tokio::spawn(async move {
                             for i in 0..OPS_PER_THREAD {
                                 m.run(move |resource| {
