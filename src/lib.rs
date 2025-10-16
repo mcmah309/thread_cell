@@ -214,10 +214,40 @@ thread_local! {
 }
 
 /// Run a future to completion on the current [`ThreadCell`].
-/// This should only ever be called from the top level closure of 
-/// [`ThreadCell::run_blocking`] or [`ThreadCellSession::run`].
+/// This should only ever be called from the top level closure of
+/// [`ThreadCell::run_blocking`], 
+/// [`ThreadCell::run`],
+/// [`ThreadCellSession::run_blocking`],
+/// or [`ThreadCellSession::run`].
 /// Will panic if called nested.
+/// ```rust
+/// # #[cfg(feature = "tokio")] {
+/// use thread_cell::ThreadCell;
+/// use thread_cell::run_local;
+///
+/// struct Counter {
+///     value: usize,
+/// }
+///
+/// let cell = ThreadCell::new(Counter { value: 0 });
+///
+/// let result = cell.run_blocking(|counter| {
+///     // Increment synchronously
+///     counter.value += 1;
+///
+///     // Run an async block on the `ThreadCell`s thread
+///     run_local(async {
+///         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+///         counter.value += 1;
+///         counter.value
+///     })
+/// });
+///
+/// assert_eq!(result, 2);
+/// # }
+/// ```
 #[cfg(feature = "tokio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
 pub fn run_local<F: Future>(future: F) -> F::Output {
     RUNTIME.with(|cell| {
         let rt = cell.get_or_init(|| {
