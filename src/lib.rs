@@ -3,12 +3,12 @@
 
 use std::thread;
 
-/// A message type for session callbacks
-type Msg<T> = Box<dyn FnOnce(&mut T) + Send>;
+/// A message to run
+type Run<T> = Box<dyn FnOnce(&mut T) + Send>;
 
 /// Messages sent to the manager thread
 enum ThreadCellMessage<T> {
-    Run(Msg<T>),
+    Run(Run<T>),
     GetSessionSync(crossbeam::channel::Sender<ThreadCellSession<T>>),
     #[cfg(feature = "tokio")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
@@ -21,7 +21,7 @@ static SESSION_ERROR_MESSAGE: &str = "ThreadCell thread has panicked or was drop
 /// While held, this is the only way to access the resource. It is possible to create a "deadlock"
 /// if a `ThreadCellSession` is requested while one is already held.
 pub struct ThreadCellSession<T> {
-    sender: crossbeam::channel::Sender<Msg<T>>,
+    sender: crossbeam::channel::Sender<Run<T>>,
 }
 
 impl<T> ThreadCellSession<T> {
@@ -208,15 +208,34 @@ impl<T: Send + Clone> ThreadCell<T> {
     }
 }
 
+/// Run a future to completion on the current [`ThreadCell`].
+/// This should only ever be called from the top level closure of 
+/// [`ThreadCell::run_blocking`] or [`ThreadCellSession::run`].
+#[cfg(feature = "tokio")]
+#[inline(always)]
+pub fn block_on<F: Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap().block_on(future)
+}
+
 const GET_SESSION_RESPONSE_ERROR_MESSAGE: &str =
     "A get session request should always be waiting for a response";
 
 fn sync_handle<T>(rx: crossbeam::channel::Receiver<ThreadCellMessage<T>>, mut resource: T) {
+    // #[cfg(feature = "tokio")]
+    // let rt = tokio::runtime::Builder::new_current_thread()
+    //     .enable_all()
+    //     .build()
+    //     .unwrap();
+    // #[cfg(feature = "tokio")]
+    // let guard = rt.enter();
     while let Ok(msg) = rx.recv() {
         match msg {
             ThreadCellMessage::Run(f) => f(&mut resource),
             ThreadCellMessage::GetSessionSync(responder) => {
-                let (stx, srx) = crossbeam::channel::unbounded::<Msg<T>>();
+                let (stx, srx) = crossbeam::channel::unbounded::<Run<T>>();
                 responder
                     .send(ThreadCellSession { sender: stx })
                     .ok()
@@ -227,7 +246,7 @@ fn sync_handle<T>(rx: crossbeam::channel::Receiver<ThreadCellMessage<T>>, mut re
             }
             #[cfg(feature = "tokio")]
             ThreadCellMessage::GetSessionAsync(responder) => {
-                let (stx, srx) = crossbeam::channel::unbounded::<Msg<T>>();
+                let (stx, srx) = crossbeam::channel::unbounded::<Run<T>>();
                 responder
                     .send(ThreadCellSession { sender: stx })
                     .ok()
@@ -238,6 +257,8 @@ fn sync_handle<T>(rx: crossbeam::channel::Receiver<ThreadCellMessage<T>>, mut re
             }
         }
     }
+    // #[cfg(feature = "tokio")]
+    // drop(guard);
 }
 
 #[cfg(test)]
@@ -347,5 +368,26 @@ mod tests {
         let cell = ThreadCell::new(TestResource::default());
         drop(cell);
         // no panic = pass
+    }
+
+    #[cfg(feature = "tokio")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn block_on_works() {
+        let cell = ThreadCell::new(TestResource::default());
+        let mut value_to_move = TestResource::default();
+        let value_to_move_returned = cell.run_blocking(|res| {
+            res.increment();
+            block_on(async move {
+                res.increment();
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                value_to_move.increment();
+                res.increment();
+                value_to_move.increment();
+                value_to_move
+            })
+        });
+        assert_eq!(value_to_move_returned.counter, 2);
+        let value = cell.run(|res| res.increment()).await;
+        assert_eq!(value, 4);
     }
 }
