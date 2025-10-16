@@ -24,6 +24,6 @@ name = "thread_cell_bench"
 harness = false
 required-features = ["tokio"]
 
-# [package.metadata.docs.rs]
-# all-features = true
+[package.metadata.docs.rs]
+all-features = true
 # rustdoc-args = ["--cfg", "docsrs"]
