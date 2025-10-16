@@ -8,12 +8,18 @@ repository = "https://github.com/mcmah309/thread_cell"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["sync"], optional = true }
 crossbeam = "0.8"
+
+[features]
+default = []
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tokio = { version = "1", features = ["full"] }
 
+# `cargo bench --all-features`
 [[bench]]
 name = "thread_cell_bench"
 harness = false
+required-features = ["tokio"]

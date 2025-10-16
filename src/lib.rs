@@ -6,6 +6,7 @@ use std::thread;
 enum ThreadCellMessage<T> {
     Run(Box<dyn FnOnce(&mut T) + Send>),
     GetSessionSync(crossbeam::channel::Sender<ThreadCellSession<T>>),
+    #[cfg(feature = "tokio")]
     GetSessionAsync(tokio::sync::oneshot::Sender<ThreadCellSession<T>>),
 }
 
@@ -37,6 +38,7 @@ impl<T> ThreadCellSession<T> {
         rx.recv().expect(SESSION_ERROR_MESSAGE)
     }
 
+    #[cfg(feature = "tokio")]
     pub async fn run<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R + Send + 'static,
@@ -87,6 +89,7 @@ impl<T: Send> ThreadCell<T> {
                             f(&mut resource);
                         }
                     }
+                    #[cfg(feature = "tokio")]
                     ThreadCellMessage::GetSessionAsync(sender) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
                         let _ = sender.send(ThreadCellSession { sender: stx });
@@ -119,6 +122,7 @@ impl<T> ThreadCell<T> {
                             f(&mut resource);
                         }
                     }
+                    #[cfg(feature = "tokio")]
                     ThreadCellMessage::GetSessionAsync(sender) => {
                         let (stx, srx) = crossbeam::channel::unbounded::<SessionMsg<T>>();
                         let _ = sender.send(ThreadCellSession { sender: stx });
@@ -148,6 +152,7 @@ impl<T> ThreadCell<T> {
         rx.recv().expect(MANAGER_ERROR_MESSAGE)
     }
 
+    #[cfg(feature = "tokio")]
     pub async fn run<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R + Send + 'static,
@@ -171,6 +176,7 @@ impl<T> ThreadCell<T> {
         rx.recv().expect(MANAGER_ERROR_MESSAGE)
     }
 
+    #[cfg(feature = "tokio")]
     pub async fn session(&self) -> ThreadCellSession<T> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
@@ -187,6 +193,7 @@ impl<T: Send> ThreadCell<T> {
     }
 
     /// Set the resource in an async manner
+    #[cfg(feature = "tokio")]
     pub async fn set(&self, new_value: T) {
         self.run(|res| *res = new_value).await;
     }
@@ -197,6 +204,7 @@ impl<T: Send> ThreadCell<T> {
     }
 
     /// Set the resource in an async manner, returning the old value
+    #[cfg(feature = "tokio")]
     pub async fn replace(&self, new_value: T) -> T {
         self.run(|res| std::mem::replace(res, new_value)).await
     }
@@ -207,6 +215,7 @@ impl<T: Send + Default> ThreadCell<T> {
         self.run_blocking(|res| std::mem::take(res))
     }
 
+    #[cfg(feature = "tokio")]
     pub async fn take(&self) -> T {
         self.run(|res| std::mem::take(res)).await
     }
@@ -219,6 +228,7 @@ impl<T: Send + Clone> ThreadCell<T> {
     }
 
     /// Get a clone of the resource in an async manner
+    #[cfg(feature = "tokio")]
     pub async fn get(&self) -> T {
         self.run(|res| res.clone()).await
     }
@@ -264,6 +274,7 @@ mod tests {
         assert_eq!(result, 1);
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test(flavor = "current_thread")]
     async fn async_run_works() {
         let cell = ThreadCell::new(TestResource::default());
@@ -282,6 +293,7 @@ mod tests {
         assert_eq!(value, 2);
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test(flavor = "current_thread")]
     async fn async_session_works() {
         let cell = ThreadCell::new(TestResource::default());
