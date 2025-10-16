@@ -26,7 +26,7 @@ fn assert_send<T: Send>() {}
 fn assert_sync<T: Sync>() {}
 
 struct NonSendSync {
-    parent: Rc<RefCell<NonSendSync>>,
+    parent: Option<Rc<RefCell<NonSendSync>>>,
     children: Vec<Rc<RefCell<NonSendSync>>>,
 }
 
@@ -118,14 +118,14 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 struct NonSendSync {
-    parent: Rc<RefCell<NonSendSync>>,
+    parent: Option<Rc<RefCell<NonSendSync>>>,
     children: Vec<Rc<RefCell<NonSendSync>>>,
 }
 
 struct SendSync {
-    parent: Arc<RwLock<SendSync>>,
+    parent: Option<Arc<RwLock<SendSync>>>,
     children: Vec<Arc<RwLock<SendSync>>>,
 }
 ```
 
-Operations on a `ThreadCell<NonSendSync>` is usually faster than operations on a `Arc<Mutex<SendSync>>`.
+Operations on a `ThreadCell<NonSendSync>` may be faster than operations on a `Arc<Mutex<SendSync>>`.
