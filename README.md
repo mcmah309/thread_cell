@@ -1,5 +1,10 @@
 # thread_cell
 
+[<img alt="github" src="https://img.shields.io/badge/github-mcmah309/thread_cell-8da0cb?style=for-the-badge&labelColor=555555&logo=github" height="20">](https://github.com/mcmah309/thread_cell)
+[<img alt="crates.io" src="https://img.shields.io/crates/v/thread_cell.svg?style=for-the-badge&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/thread_cell)
+[<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-thread_cell-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" height="20">](https://docs.rs/thread_cell)
+[<img alt="test status" src="https://img.shields.io/github/actions/workflow/status/mcmah309/thread_cell/rust.yml?branch=master&style=for-the-badge" height="20">](https://github.com/mcmah309/thread_cell/actions/workflows/rust.yml)
+
 **thread_cell** is a Rust crate that gives you **safe, `Send`/`Sync` access to non-`Send`/`Sync` data** by isolating it on a dedicated thread and interacting with it through message passing.
 
 Unlike `Arc<Mutex<T>>`, `ThreadCell<T>` does not require `T: Send + Sync`, yet you can still share it across threads. This makes it perfect for types like `Rc`, `RefCell`, or FFI handles that are not `Send`.
@@ -39,46 +44,65 @@ assert_sync::<ThreadCell<NonSendSync>>();
 ## Example
 
 ```rust
+use std::rc::Rc;
+use std::cell::RefCell;
 use thread_cell::ThreadCell;
 
-#[derive(Default)]
-struct Resource {
-    counter: usize,
+#[derive(Debug)]
+struct GameState {
+    score: usize,
 }
 
 fn main() {
-    let cell = ThreadCell::new(Resource::default());
+    // Rc<RefCell<_>> is !Send and !Sync
+    let shared = ThreadCell::new_with(|| Rc::new(RefCell::new(GameState { score: 0 })));
 
-    // Blocking access
-    let result = cell.run_blocking(|res| {
-        res.counter += 1;
-        res.counter
-    });
-    println!("Counter: {result}");
-
-    // Async access
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let result = cell
-            .run(|res| {
-                res.counter += 1;
-                res.counter
-            })
-            .await;
-        println!("Counter: {result}");
+    // Example: synchronous access
+    shared.run_blocking(|state| {
+        state.borrow_mut().score += 10;
+        println!("Score after sync update: {}", state.borrow().score);
     });
 
-    // Session access (exclusive, multiple operations)
-    let session = cell.session_blocking();
-    session.run_blocking(|res| {
-        res.counter += 10;
+    // Example: async access (e.g. from tokio tasks)
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on({
+        let shared = shared.clone();
+        async move {
+            let a = shared.clone();
+            let b = shared;
+
+            let t1 = tokio::spawn(async move {
+                a.run(|state| {
+                    state.borrow_mut().score += 5;
+                    state.borrow().score
+                })
+                .await
+            });
+
+            let t2 = tokio::spawn(async move {
+                b.run(|state| {
+                    state.borrow_mut().score += 20;
+                    state.borrow().score
+                })
+                .await
+            });
+
+            let (s1, s2) = tokio::join!(t1, t2);
+            println!("Task 1 score: {}", s1.unwrap());
+            println!("Task 2 score: {}", s2.unwrap());
+        }
     });
-    // do some other work..
-    let final_value = session.run_blocking(|res| {
-        res.counter *= 2;
-        res.counter
-    });
-    println!("Final counter: {final_value}");
+
+    // Final value (safe to access again)
+    let final_score = shared.run_blocking(|state| state.borrow().score);
+    println!("Final score: {final_score}");
 }
+```
+```console
+Score after sync update: 10
+Task 1 score: 15
+Task 2 score: 35
+Final score: 35
 ```
 
 ## When to Use ThreadCell
