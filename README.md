@@ -127,5 +127,6 @@ struct SendSync {
     children: Vec<Arc<RwLock<SendSync>>>,
 }
 ```
-
 Operations on a `ThreadCell<NonSendSync>` may be faster than operations on a `Arc<Mutex<SendSync>>`.
+
+Another use case for `ThreadCell` is when code may be called from a sync or async context. There exists implementations for async `Mutex` (e.g. `tokio::sync::Mutex`) and sync `Mutex` (e.g. `std::sync::Mutex`) but usually one has to choose one or the other. Since `ThreadCell` uses message passing, code can be called from async or sync code depending on the context - e.g. `ThreadCell::run(..).await` vs `ThreadCell::run_blocking(..)`. The closure can also execute async code with help of the provided `run_local` function.
