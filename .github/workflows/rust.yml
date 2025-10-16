@@ -19,6 +19,6 @@ jobs:
     - name: Build
       run: cargo build --verbose && cargo build --verbose --all-features
     - name: Run tests
-      run: cargo test --verbose && cargo test --verbose --all-features
+      run: cargo test --verbose --all-features
     - name: Run benches
       run: cargo bench --verbose --all-features
