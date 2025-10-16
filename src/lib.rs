@@ -1,3 +1,4 @@
+// #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
 use std::thread;
@@ -7,6 +8,7 @@ enum ThreadCellMessage<T> {
     Run(Box<dyn FnOnce(&mut T) + Send>),
     GetSessionSync(crossbeam::channel::Sender<ThreadCellSession<T>>),
     #[cfg(feature = "tokio")]
+    //#[doc(cfg(feature = "tokio"))]
     GetSessionAsync(tokio::sync::oneshot::Sender<ThreadCellSession<T>>),
 }
 
@@ -39,6 +41,7 @@ impl<T> ThreadCellSession<T> {
     }
 
     #[cfg(feature = "tokio")]
+    //#[doc(cfg(feature = "tokio"))]
     pub async fn run<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R + Send + 'static,
@@ -153,6 +156,7 @@ impl<T> ThreadCell<T> {
     }
 
     #[cfg(feature = "tokio")]
+    //#[doc(cfg(feature = "tokio"))]
     pub async fn run<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R + Send + 'static,
@@ -177,6 +181,7 @@ impl<T> ThreadCell<T> {
     }
 
     #[cfg(feature = "tokio")]
+    //#[doc(cfg(feature = "tokio"))]
     pub async fn session(&self) -> ThreadCellSession<T> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
@@ -194,6 +199,7 @@ impl<T: Send> ThreadCell<T> {
 
     /// Set the resource in an async manner
     #[cfg(feature = "tokio")]
+    //#[doc(cfg(feature = "tokio"))]
     pub async fn set(&self, new_value: T) {
         self.run(|res| *res = new_value).await;
     }
@@ -205,6 +211,7 @@ impl<T: Send> ThreadCell<T> {
 
     /// Set the resource in an async manner, returning the old value
     #[cfg(feature = "tokio")]
+    //#[doc(cfg(feature = "tokio"))]
     pub async fn replace(&self, new_value: T) -> T {
         self.run(|res| std::mem::replace(res, new_value)).await
     }
@@ -216,6 +223,7 @@ impl<T: Send + Default> ThreadCell<T> {
     }
 
     #[cfg(feature = "tokio")]
+    //#[doc(cfg(feature = "tokio"))]
     pub async fn take(&self) -> T {
         self.run(|res| std::mem::take(res)).await
     }
@@ -229,6 +237,7 @@ impl<T: Send + Clone> ThreadCell<T> {
 
     /// Get a clone of the resource in an async manner
     #[cfg(feature = "tokio")]
+    //#[doc(cfg(feature = "tokio"))]
     pub async fn get(&self) -> T {
         self.run(|res| res.clone()).await
     }
