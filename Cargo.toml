@@ -2,7 +2,7 @@
 name = "thread_cell"
 description = "Safe, Send + Sync access to !Send/!Sync data by isolating it on a dedicated thread and interacting with it through message passing. Perfect for Rc, RefCell, and other single-threaded types."
 license = "Apache-2.0"
-version = "0.2.2"
+version = "0.2.3"
 readme = "README.md"
 repository = "https://github.com/mcmah309/thread_cell"
 edition = "2024"
